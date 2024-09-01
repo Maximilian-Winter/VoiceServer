@@ -7,6 +7,7 @@
 #include <vector>
 #include <deque>
 #include <sha1.hpp>
+#include <AsioThreadPool.h>
 using asio::ip::tcp;
 
 namespace Base64Utilities
@@ -75,13 +76,17 @@ class WebSocketSession : public std::enable_shared_from_this<WebSocketSession> {
 public:
     using message_handler = std::function<void(WebSocketOpCode, const std::string&)>;
 
-    explicit WebSocketSession(tcp::socket& socket, message_handler on_message)
-        : socket_(std::move(socket)), on_message_(std::move(on_message)) {}
+    explicit WebSocketSession(tcp::socket& socket)
+        : socket_(std::move(socket)) {}
 
     void start() {
         do_handshake();
     }
 
+    void setMessageHandler(const message_handler &msg_handler)
+    {
+        on_message_ = msg_handler;
+    }
     void send(const std::string& message, WebSocketOpCode opcode = WebSocketOpCode::Text) {
         auto frame = create_websocket_frame(message, opcode);
         bool write_in_progress = !write_queue_.empty();
@@ -136,6 +141,7 @@ private:
     void do_read() {
         auto self(shared_from_this());
         read_buffer_ = std::make_shared<std::vector<uint8_t>>();
+        read_buffer_->resize(1024);
         socket_.async_read_some(asio::buffer(*read_buffer_),
             [this, self](std::error_code ec, std::size_t length) {
                 if (!ec) {
@@ -279,6 +285,7 @@ public:
         : acceptor_(io_context, tcp::endpoint(tcp::v4(), port)),
           timer_(io_context) {
         do_accept();
+        start_hello_world_timer();
     }
 
     void set_message_handler(std::function<void(std::shared_ptr<WebSocketSession>, WebSocketOpCode, const std::string&)> handler) {
@@ -290,20 +297,20 @@ public:
             session->send(message, opcode);
         }
     }
-    asio::steady_timer timer_;
+
 private:
     void do_accept() {
         acceptor_.async_accept(
             [this](std::error_code ec, tcp::socket socket) {
                 if (!ec) {
-                    auto session = std::make_shared<WebSocketSession>(
-                        socket,
-                        [this, weak_session = std::weak_ptr<WebSocketSession>{}](WebSocketOpCode opcode, const std::string& message) mutable {
-                            if (auto session = weak_session.lock()) {
+                    auto session = std::make_shared<WebSocketSession>(socket);
+                    session->setMessageHandler([this, session](WebSocketOpCode opcode, const std::string& message) mutable {
+                        if (session) {
+                            if (message_handler_) {
                                 message_handler_(session, opcode, message);
                             }
                         }
-                    );
+                    });
                     sessions_.push_back(session);
                     session->start();
                 }
@@ -311,36 +318,35 @@ private:
             });
     }
 
+    void start_hello_world_timer() {
+        timer_.expires_after(std::chrono::seconds(1));
+        timer_.async_wait([this](const asio::error_code& ec) {
+            if (!ec) {
+                broadcast("Hello World");
+                start_hello_world_timer(); // Reschedule the timer
+            }
+        });
+    }
+
     tcp::acceptor acceptor_;
+    asio::steady_timer timer_;
     std::function<void(std::shared_ptr<WebSocketSession>, WebSocketOpCode, const std::string&)> message_handler_;
     std::vector<std::shared_ptr<WebSocketSession>> sessions_;
-
 };
 
 int main() {
     try {
-        asio::io_context io_context;
-        WebSocketServer server(io_context, 8080);
+        AsioThreadPool thread_pool;
+        WebSocketServer server(thread_pool.get_io_context(), 8080);
 
-        server.set_message_handler([](std::shared_ptr<WebSocketSession> session, WebSocketOpCode opcode, const std::string& message) {
+        server.set_message_handler([&server](std::shared_ptr<WebSocketSession> session, WebSocketOpCode opcode, const std::string& message) {
             std::cout << "Received message: " << message << std::endl;
             // Echo the message back to the client
             session->send(message, opcode);
         });
 
-        // Function to send "Hello World" every second
-        std::function<void(const asio::error_code&)> send_hello_world;
-        send_hello_world = [&](const asio::error_code& /*e*/) {
-            server.broadcast("Hello World");
-            server.timer_.expires_after(std::chrono::seconds(1));
-            server.timer_.async_wait(send_hello_world);
-        };
-
-        // Start the timer
-        server.timer_.expires_after(std::chrono::seconds(1));
-        server.timer_.async_wait(send_hello_world);
-
-        io_context.run();
+        thread_pool.run();
+        std::cin.get();
     } catch (std::exception& e) {
         std::cerr << "Exception: " << e.what() << "\n";
     }
