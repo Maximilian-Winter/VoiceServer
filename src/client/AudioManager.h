@@ -67,9 +67,9 @@ public:
 
 private:
     static constexpr int SAMPLE_RATE = 44100;
-    static constexpr int FRAMES_PER_BUFFER = 0;  // Fixed buffer size
+    static constexpr int FRAMES_PER_BUFFER = 4096;  // Fixed buffer size
     static constexpr int MAX_BUFFER_SIZE = 10;  // Maximum number of packets to buffer
-    static constexpr float SMOOTHING_FACTOR = 0.1f;  // Smoothing factor for cross-fading
+    static constexpr float SMOOTHING_FACTOR = 0.5f;  // Smoothing factor for cross-fading
 
     bool startStreams() {
         PaError err = Pa_StartStream(input_stream_);

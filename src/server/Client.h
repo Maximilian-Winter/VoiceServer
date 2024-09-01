@@ -7,11 +7,11 @@
 #include "AudioPacket.h"
 class Client {
 public:
-    Client(std::shared_ptr<Connection> connection, const std::string& id)
-        : connection_(connection), id_(id) {}
+    Client(std::shared_ptr<Connection> connection, udp::socket& socket, const std::string& id)
+        : connection_(connection), id_(id), socket_(socket) {}
 
-    void send(udp::socket& socket, const AudioPacket& packet) {
-        connection_->send(socket, packet);
+    void send(const AudioPacket& packet) {
+        connection_->send(socket_, packet);
     }
 
     std::string getId() const { return id_; }
@@ -19,4 +19,5 @@ public:
 private:
     std::shared_ptr<Connection> connection_;
     std::string id_;
+    udp::socket& socket_;
 };

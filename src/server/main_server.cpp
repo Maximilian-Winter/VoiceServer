@@ -14,8 +14,10 @@ using asio::ip::udp;
 class VoiceChatServer : public std::enable_shared_from_this<VoiceChatServer> {
 public:
     VoiceChatServer(asio::io_context& io_context, short port)
-        : socket_(io_context, udp::endpoint(udp::v4(), port)),
-          io_context_(io_context) {}
+    : io_context_(io_context), socket_(io_context, udp::endpoint(udp::v4(), port))
+    {
+        room_manager_ = std::make_shared<RoomManager>(io_context);
+    }
 
     void start() {
         std::cout << "Voice Chat Server started. Waiting for clients..." << std::endl;
@@ -40,22 +42,22 @@ private:
         std::string client_key = remote_endpoint_.address().to_string() + ":" +
                                  std::to_string(remote_endpoint_.port());
 
-        if (room_manager_.getClient(client_key) == nullptr) {
+        if (room_manager_->getClient(client_key) == nullptr) {
             std::cout << "New client connected: " << client_key << std::endl;
             auto connection = std::make_shared<Connection>(remote_endpoint_);
-            auto client = std::make_shared<Client>(connection, client_key);
-            room_manager_.addClient(client);
+            auto client = std::make_shared<Client>(connection, socket_, client_key);
+            room_manager_->addClient(client);
         }
 
         AudioPacket packet(recv_buffer_.data(), bytes_recvd);
-        room_manager_.processAudio(socket_, client_key, packet);
+        room_manager_->processAudio(client_key, packet);
     }
 
     udp::socket socket_;
     udp::endpoint remote_endpoint_;
     std::array<char, 32768> recv_buffer_{};
     asio::io_context& io_context_;
-    RoomManager room_manager_;
+    std::shared_ptr<RoomManager> room_manager_;
 };
 
 int main(int argc, char* argv[]) {
