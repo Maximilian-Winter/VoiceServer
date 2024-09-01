@@ -87,10 +87,9 @@ private:
             std::vector<AudioPacket> packetsToMix;
 
             for (const auto& [bufferId, buffer] : audioBuffers_) {
+                auto lastActivity = clientLastActivity_[bufferId];
                 if (bufferId != clientId && !buffer.empty()) {
-                    auto lastActivity = clientLastActivity_[bufferId];
                     if (now - lastActivity <= ACTIVITY_TIMEOUT) {
-                        // Mix all packets in the buffer
                         packetsToMix.insert(packetsToMix.end(), buffer.begin(), buffer.end());
                     }
                 }
