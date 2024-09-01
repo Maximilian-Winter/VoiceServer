@@ -36,7 +36,7 @@ private:
 
     void start_receive() {
         auto self(shared_from_this());
-        recv_buffer_.resize(32768);
+        recv_buffer_.resize(16384);
         socket_.async_receive_from(
             asio::buffer(recv_buffer_), server_endpoint_,
             strand_.wrap([this, self](std::error_code ec, std::size_t bytes_recvd) {
@@ -95,7 +95,7 @@ private:
     asio::steady_timer send_timer_;
     asio::steady_timer jitter_buffer_timer_;
     asio::io_context::strand strand_;
-    std::vector<char> recv_buffer_;
+    std::vector<uint8_t> recv_buffer_;
     std::function<void(const AudioPacket&)> receive_callback_;
     std::function<AudioPacket()> send_callback_;
     std::queue<AudioPacket> jitter_buffer_;

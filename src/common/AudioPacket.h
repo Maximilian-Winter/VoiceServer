@@ -9,13 +9,16 @@
 class AudioPacket {
 public:
     AudioPacket() = default;
-    AudioPacket(const char* data, size_t size) : data_(data, data + size) {}
+    AudioPacket(const uint8_t* data, size_t size) : data_(data, data + size) {}
 
-    [[nodiscard]] const char* data() const { return data_.data(); }
+    [[nodiscard]] const uint8_t* data() const { return data_.data(); }
+
+    [[nodiscard]] const std::vector<uint8_t>& data_vector() const { return data_; }
+
     [[nodiscard]] size_t size() const { return data_.size(); }
 
     [[nodiscard]] bool empty() const { return data_.empty(); }
 
 private:
-    std::vector<char> data_;
+    std::vector<uint8_t> data_;
 };

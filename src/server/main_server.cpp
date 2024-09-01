@@ -3,6 +3,8 @@
 #include <memory>
 
 #include <asio.hpp>
+#include <utility>
+#include <WebSocketServer.h>
 
 #include "Config.h"
 #include "RoomManager.h"
@@ -22,6 +24,17 @@ public:
     void start() {
         std::cout << "Voice Chat Server started. Waiting for clients..." << std::endl;
         start_receive();
+    }
+
+    void add_websocket_user(std::shared_ptr<WebSocketSession> connection)
+    {
+        auto client = std::make_shared<WebSocketClient>(connection, socket_, connection->getUuid());
+        room_manager_->addClient(client);
+        std::cout << "New client connected: " << client->getId() << std::endl;
+    }
+    void handle_receive_websocket(std::string client_key, std::vector<uint8_t> bytes) {
+        AudioPacket packet(bytes.data(), bytes.size());
+        room_manager_->processAudio(client_key, packet);
     }
 
 private:
@@ -45,7 +58,7 @@ private:
         if (room_manager_->getClient(client_key) == nullptr) {
             std::cout << "New client connected: " << client_key << std::endl;
             auto connection = std::make_shared<Connection>(remote_endpoint_);
-            auto client = std::make_shared<Client>(connection, socket_, client_key);
+            auto client = std::make_shared<UDPClient>(connection, socket_, client_key);
             room_manager_->addClient(client);
         }
 
@@ -55,7 +68,7 @@ private:
 
     udp::socket socket_;
     udp::endpoint remote_endpoint_;
-    std::array<char, 32768> recv_buffer_{};
+    std::array<uint8_t, 16384> recv_buffer_{};
     asio::io_context& io_context_;
     std::shared_ptr<RoomManager> room_manager_;
 };
@@ -69,10 +82,28 @@ int main(int argc, char* argv[]) {
     config.load(argv[1]);
 
     try {
-        asio::io_context io_context;
-        auto server = std::make_shared<VoiceChatServer>(io_context, config.get<short>("port", 12345));
+        AsioThreadPool thread_pool;
+
+        auto server = std::make_shared<VoiceChatServer>(thread_pool.get_io_context(), config.get<short>("port", 12345));
+
+        auto web_socket_server = std::make_shared<WebSocketServer>(thread_pool.get_io_context(), 8080);
+
+        web_socket_server->set_new_client_handler([server](std::shared_ptr<WebSocketSession> session)
+        {
+            server->add_websocket_user(std::move(session));
+        });
+        web_socket_server->set_message_handler([server](const std::shared_ptr<WebSocketSession>& session, WebSocketOpCode opcode, const std::string& message) {
+            if(opcode == WebSocketOpCode::Binary)
+            {
+                std::vector<uint8_t> data(message.begin(), message.end());
+                server->handle_receive_websocket(session->getUuid(), data);
+            }
+
+        });
+
         server->start();
-        io_context.run();
+        thread_pool.run();
+        std::cin.get();
     } catch (std::exception& e) {
         std::cerr << "Exception: " << e.what() << std::endl;
     }

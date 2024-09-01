@@ -48,7 +48,7 @@ public:
 
     AudioPacket getInputData() {
         std::lock_guard<std::mutex> lock(input_mutex_);
-        AudioPacket packet(input_buffer_.data(), input_buffer_.size());
+        AudioPacket packet(reinterpret_cast<const uint8_t *>(input_buffer_.data()), input_buffer_.size());
         input_buffer_.clear();
         return packet;
     }
