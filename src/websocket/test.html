@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #messageLog {
+            border: 1px solid #ccc;
+            padding: 10px;
+            height: 300px;
+            overflow-y: scroll;
+        }
+    </style>
+</head>
+<body>
+<h1>WebSocket Client</h1>
+<div>
+    <button id="connectBtn">Connect</button>
+    <button id="disconnectBtn" disabled>Disconnect</button>
+</div>
+<h2>Messages:</h2>
+<div id="messageLog"></div>
+
+<script>
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const messageLog = document.getElementById('messageLog');
+    let socket;
+
+    function log(message) {
+        const p = document.createElement('p');
+        p.textContent = message;
+        messageLog.appendChild(p);
+        messageLog.scrollTop = messageLog.scrollHeight;
+    }
+
+    function connect() {
+        socket = new WebSocket('ws://localhost:8080');
+
+        socket.onopen = function() {
+            log('Connected to the server');
+            connectBtn.disabled = true;
+            disconnectBtn.disabled = false;
+        };
+
+        socket.onmessage = function(event) {
+            log('Received: ' + event.data);
+        };
+
+        socket.onclose = function() {
+            log('Disconnected from the server');
+            connectBtn.disabled = false;
+            disconnectBtn.disabled = true;
+        };
+
+        socket.onerror = function(error) {
+            log('Error: ' + error.message);
+        };
+    }
+
+    function disconnect() {
+        if (socket) {
+            socket.close();
+        }
+    }
+
+    connectBtn.addEventListener('click', connect);
+    disconnectBtn.addEventListener('click', disconnect);
+</script>
+</body>
+</html>

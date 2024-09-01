@@ -27,7 +27,7 @@ public:
         std::vector<int16_t> outputBuffer(sampleCount);
         for (size_t i = 0; i < sampleCount; ++i) {
             int32_t sample = mixBuffer[i] / static_cast<int32_t>(packets.size());
-            outputBuffer[i] = static_cast<int16_t>(std::clamp(sample, -32768, 32768));
+            outputBuffer[i] = static_cast<int16_t>(std::clamp(sample, -32768, 32767));
         }
 
         return AudioPacket(reinterpret_cast<const char*>(outputBuffer.data()), outputBuffer.size() * sizeof(int16_t));
