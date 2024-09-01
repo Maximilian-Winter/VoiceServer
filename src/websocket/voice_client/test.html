@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Chat Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        button {
+            margin: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #status {
+            margin-top: 20px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+<h1>Voice Chat Client</h1>
+<button id="connectBtn">Connect</button>
+<button id="disconnectBtn" disabled>Disconnect</button>
+<button id="startAudioBtn" disabled>Start Audio</button>
+<button id="stopAudioBtn" disabled>Stop Audio</button>
+<div id="status">Disconnected</div>
+
+<script>
+    let audioContext;
+    let audioWorklet;
+    let mediaStream;
+    let webSocket;
+
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const startAudioBtn = document.getElementById('startAudioBtn');
+    const stopAudioBtn = document.getElementById('stopAudioBtn');
+    const statusDiv = document.getElementById('status');
+
+    connectBtn.addEventListener('click', connect);
+    disconnectBtn.addEventListener('click', disconnect);
+    startAudioBtn.addEventListener('click', startAudio);
+    stopAudioBtn.addEventListener('click', stopAudio);
+
+    async function connect() {
+        try {
+            webSocket = new WebSocket('ws://localhost:8080'); // Replace with your WebSocket server URL
+            webSocket.binaryType = 'arraybuffer';
+
+            webSocket.onopen = () => {
+                statusDiv.textContent = 'Connected';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                startAudioBtn.disabled = false;
+            };
+
+            webSocket.onclose = () => {
+                statusDiv.textContent = 'Disconnected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                startAudioBtn.disabled = true;
+                stopAudioBtn.disabled = true;
+            };
+
+            webSocket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                statusDiv.textContent = 'Connection error';
+            };
+
+            webSocket.onmessage = (event) => {
+                // Handle incoming audio data
+                if (audioWorklet && event.data instanceof ArrayBuffer) {
+                    const audioData = new Float32Array(event.data);
+                    audioWorklet.port.postMessage(audioData);
+                }
+            };
+        } catch (error) {
+            console.error('Connection error:', error);
+            statusDiv.textContent = 'Connection error';
+        }
+    }
+
+    function disconnect() {
+        if (webSocket) {
+            webSocket.close();
+        }
+        stopAudio();
+    }
+
+    async function startAudio() {
+        try {
+            audioContext = new AudioContext();
+            await audioContext.audioWorklet.addModule('voice-processor.js');
+
+            audioWorklet = new AudioWorkletNode(audioContext, 'voice-processor');
+            audioWorklet.connect(audioContext.destination);
+
+            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const source = audioContext.createMediaStreamSource(mediaStream);
+            source.connect(audioWorklet);
+
+            statusDiv.textContent = 'Audio started';
+            startAudioBtn.disabled = true;
+            stopAudioBtn.disabled = false;
+
+            // Send audio data to the server
+            audioWorklet.port.onmessage = (event) => {
+                if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+                    webSocket.send(event.data);
+                }
+            };
+        } catch (error) {
+            console.error('Audio start error:', error);
+            statusDiv.textContent = 'Audio start error';
+        }
+    }
+
+    function stopAudio() {
+        if (audioContext) {
+            audioContext.close();
+            audioContext = null;
+        }
+        if (mediaStream) {
+            mediaStream.getTracks().forEach(track => track.stop());
+            mediaStream = null;
+        }
+        statusDiv.textContent = 'Audio stopped';
+        startAudioBtn.disabled = false;
+        stopAudioBtn.disabled = true;
+    }
+</script>
+</body>
+</html>

@@ -57,23 +57,23 @@ set_target_properties(voice_client PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-file(GLOB WEBSOCKET_SERVER_SOURCES "src/websocket/*.cpp" "src/websocket/*.h")
+file(GLOB WEBSOCKET_SERVER_SOURCES "src/websocket/basic_text/*.cpp" "src/basic_text/websocket/*.h")
 # Voice Chat Client
-add_executable(websocket_server
+add_executable(text_websocket_server
         ${WEBSOCKET_SERVER_SOURCES}
 )
 
-target_include_directories(websocket_server PRIVATE
+target_include_directories(text_websocket_server PRIVATE
         ${ASIO_INCLUDE_DIR}
         ${PORTAUDIO_DIR}/include
         external
         src/common
 )
 
-target_link_libraries(websocket_server PRIVATE
+target_link_libraries(text_websocket_server PRIVATE
         portaudio_static
 )
 
-set_target_properties(websocket_server PROPERTIES
+set_target_properties(text_websocket_server PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
