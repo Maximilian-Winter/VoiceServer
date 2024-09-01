@@ -57,7 +57,7 @@ set_target_properties(voice_client PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-file(GLOB WEBSOCKET_SERVER_SOURCES "src/http/*.cpp" "src/http/*.h")
+file(GLOB WEBSOCKET_SERVER_SOURCES "src/websocket/*.cpp" "src/websocket/*.h")
 # Voice Chat Client
 add_executable(websocket_server
         ${WEBSOCKET_SERVER_SOURCES}
