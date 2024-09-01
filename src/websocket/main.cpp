@@ -6,17 +6,89 @@
 #include <thread>
 #include <vector>
 #include <deque>
-#include "sha1.hpp"
-
+#include <sha1.hpp>
 using asio::ip::tcp;
+
+namespace Base64Utilities
+{
+    std::string from_base64(const std::string& input)
+    {
+        static const std::string b64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        static std::unordered_map<char, int> b64_index;
+        if (b64_index.empty()) {
+            for (int i = 0; i < 64; ++i) {
+                b64_index[b64_chars[i]] = i;
+            }
+        }
+
+        std::string result;
+        int val = 0;
+        int val_b = -8;
+        for (char c : input) {
+            if (c == '=') break;
+            if (b64_index.find(c) == b64_index.end()) continue;
+
+            val = (val << 6) + b64_index[c];
+            val_b += 6;
+            if (val_b >= 0) {
+                result.push_back(char((val >> val_b) & 0xFF));
+                val_b -= 8;
+            }
+        }
+
+        return result;
+    }
+
+    std::string to_base_64(const std::string& input)
+    {
+        // Convert hash to base64
+        static const char* b64_table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string result;
+        unsigned int val = 0;
+        int val_b = -6;
+        for (int i = 0; i < input.length(); i += 2) {
+            unsigned char c = std::stoi(input.substr(i, 2), nullptr, 16);
+            val = (val << 8) + c;
+            val_b += 8;
+            while (val_b >= 0) {
+                result.push_back(b64_table[(val >> val_b) & 0x3F]);
+                val_b -= 6;
+            }
+        }
+        if (val_b > -6) result.push_back(b64_table[((val << 8) >> (val_b + 8)) & 0x3F]);
+        while (result.size() % 4) result.push_back('=');
+
+        return result;
+    }
+}
+
+enum class WebSocketOpCode : uint8_t {
+    Continuation = 0x0,
+    Text = 0x1,
+    Binary = 0x2,
+    Close = 0x8,
+    Ping = 0x9,
+    Pong = 0xA
+};
 
 class WebSocketSession : public std::enable_shared_from_this<WebSocketSession> {
 public:
-    WebSocketSession(tcp::socket socket)
-        : socket_(std::move(socket)) {}
+    using message_handler = std::function<void(WebSocketOpCode, const std::string&)>;
+
+    explicit WebSocketSession(tcp::socket& socket, message_handler on_message)
+        : socket_(std::move(socket)), on_message_(std::move(on_message)) {}
 
     void start() {
         do_handshake();
+    }
+
+    void send(const std::string& message, WebSocketOpCode opcode = WebSocketOpCode::Text) {
+        auto frame = create_websocket_frame(message, opcode);
+        bool write_in_progress = !write_queue_.empty();
+        write_queue_.push_back(std::make_shared<std::vector<unsigned char>>(std::move(frame)));
+        if (!write_in_progress) {
+            do_write();
+        }
     }
 
 private:
@@ -50,7 +122,7 @@ private:
                     asio::async_write(socket_, asio::buffer(*msg),
                         [this, msg, self](std::error_code ec, std::size_t /*length*/) {
                             if (!ec) {
-                                do_write();
+                                do_read();
                             } else {
                                 std::cerr << "Handshake write error: " << ec.message() << "\n";
                             }
@@ -61,19 +133,34 @@ private:
             });
     }
 
+    void do_read() {
+        auto self(shared_from_this());
+        read_buffer_ = std::make_shared<std::vector<uint8_t>>();
+        socket_.async_read_some(asio::buffer(*read_buffer_),
+            [this, self](std::error_code ec, std::size_t length) {
+                if (!ec) {
+                    handle_frame(*read_buffer_, length);
+                    do_read(); // Continue reading
+                } else {
+                    std::cerr << "Read error: " << ec.message() << "\n";
+                }
+            });
+    }
+
     void do_write() {
         auto self(shared_from_this());
-        std::string message = "Hello from WebSocket server!";
-
-        // Construct WebSocket frame
-        auto frame = create_websocket_frame(message);
-
-        // Store the frame in the write queue
-        bool write_in_progress = !write_queue_.empty();
-        write_queue_.push_back(std::make_shared<std::vector<unsigned char>>(std::move(frame)));
-
-        if (!write_in_progress) {
-            do_write_frame();
+        if (!write_queue_.empty()) {
+            asio::async_write(socket_, asio::buffer(*write_queue_.front()),
+                [this, self](std::error_code ec, std::size_t /*length*/) {
+                    if (!ec) {
+                        write_queue_.pop_front();
+                        if (!write_queue_.empty()) {
+                            do_write(); // Continue writing if there are more messages
+                        }
+                    } else {
+                        std::cerr << "Write error: " << ec.message() << "\n";
+                    }
+                });
         }
     }
 
@@ -96,6 +183,46 @@ private:
             });
     }
 
+
+    void handle_frame(const std::vector<unsigned char>& buffer, std::size_t length) {
+        if (length < 2) return;
+
+        bool fin = (buffer[0] & 0x80) != 0;
+        WebSocketOpCode opcode = static_cast<WebSocketOpCode>(buffer[0] & 0x0F);
+        bool masked = (buffer[1] & 0x80) != 0;
+        uint64_t payload_length = buffer[1] & 0x7F;
+        size_t header_length = 2;
+
+        if (payload_length == 126) {
+            if (length < 4) return;
+            payload_length = (buffer[2] << 8) | buffer[3];
+            header_length += 2;
+        } else if (payload_length == 127) {
+            if (length < 10) return;
+            payload_length = 0;
+            for (int i = 0; i < 8; ++i) {
+                payload_length = (payload_length << 8) | buffer[2 + i];
+            }
+            header_length += 8;
+        }
+
+        if (masked) {
+            if (length < header_length + 4) return;
+            std::vector<unsigned char> mask(buffer.begin() + header_length, buffer.begin() + header_length + 4);
+            header_length += 4;
+
+            std::string payload(buffer.begin() + header_length, buffer.begin() + header_length + payload_length);
+            for (size_t i = 0; i < payload.size(); ++i) {
+                payload[i] ^= mask[i % 4];
+            }
+
+            on_message_(opcode, payload);
+        } else {
+            std::string payload(buffer.begin() + header_length, buffer.begin() + header_length + payload_length);
+            on_message_(opcode, payload);
+        }
+    }
+
     std::string extract_websocket_key(const std::string& request) {
         std::string key_header = "Sec-WebSocket-Key: ";
         auto key_pos = request.find(key_header);
@@ -104,6 +231,7 @@ private:
         if (key_end == std::string::npos) return "";
         return request.substr(key_pos + key_header.length(), key_end - (key_pos + key_header.length()));
     }
+
 
     std::string generate_websocket_accept(const std::string& key) {
         std::string magic_string = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -114,29 +242,12 @@ private:
         sha1.update(concatenated);
         std::string hash = sha1.final();
 
-        // Convert hash to base64
-        static const char* b64_table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        std::string result;
-        unsigned int val = 0;
-        int val_b = -6;
-        for (int i = 0; i < hash.length(); i += 2) {
-            unsigned char c = std::stoi(hash.substr(i, 2), nullptr, 16);
-            val = (val << 8) + c;
-            val_b += 8;
-            while (val_b >= 0) {
-                result.push_back(b64_table[(val >> val_b) & 0x3F]);
-                val_b -= 6;
-            }
-        }
-        if (val_b > -6) result.push_back(b64_table[((val << 8) >> (val_b + 8)) & 0x3F]);
-        while (result.size() % 4) result.push_back('=');
-
-        return result;
+        return Base64Utilities::to_base_64(hash);
     }
 
-    std::vector<unsigned char> create_websocket_frame(const std::string& message) {
+    std::vector<unsigned char> create_websocket_frame(const std::string& message, WebSocketOpCode opcode) {
         std::vector<unsigned char> frame;
-        frame.push_back(0x81);  // FIN bit set, opcode for text frame
+        frame.push_back(0x80 | static_cast<unsigned char>(opcode));  // FIN bit set, opcode
 
         if (message.size() <= 125) {
             frame.push_back(message.size());
@@ -151,41 +262,84 @@ private:
             }
         }
 
-        // Add masking key (server-to-client messages should not be masked)
         frame.insert(frame.end(), message.begin(), message.end());
         return frame;
     }
 
     tcp::socket socket_;
     asio::streambuf buffer_;
-    std::deque<std::shared_ptr<std::vector<unsigned char>>> write_queue_;
+    std::shared_ptr<std::vector<uint8_t>> read_buffer_;
+    std::deque<std::shared_ptr<std::vector<uint8_t>>> write_queue_;
+    message_handler on_message_;
 };
 
 class WebSocketServer {
 public:
     WebSocketServer(asio::io_context& io_context, short port)
-        : acceptor_(io_context, tcp::endpoint(tcp::v4(), port)) {
+        : acceptor_(io_context, tcp::endpoint(tcp::v4(), port)),
+          timer_(io_context) {
         do_accept();
     }
 
+    void set_message_handler(std::function<void(std::shared_ptr<WebSocketSession>, WebSocketOpCode, const std::string&)> handler) {
+        message_handler_ = std::move(handler);
+    }
+
+    void broadcast(const std::string& message, WebSocketOpCode opcode = WebSocketOpCode::Text) {
+        for (auto& session : sessions_) {
+            session->send(message, opcode);
+        }
+    }
+    asio::steady_timer timer_;
 private:
     void do_accept() {
         acceptor_.async_accept(
             [this](std::error_code ec, tcp::socket socket) {
                 if (!ec) {
-                    std::make_shared<WebSocketSession>(std::move(socket))->start();
+                    auto session = std::make_shared<WebSocketSession>(
+                        socket,
+                        [this, weak_session = std::weak_ptr<WebSocketSession>{}](WebSocketOpCode opcode, const std::string& message) mutable {
+                            if (auto session = weak_session.lock()) {
+                                message_handler_(session, opcode, message);
+                            }
+                        }
+                    );
+                    sessions_.push_back(session);
+                    session->start();
                 }
                 do_accept();
             });
     }
 
     tcp::acceptor acceptor_;
+    std::function<void(std::shared_ptr<WebSocketSession>, WebSocketOpCode, const std::string&)> message_handler_;
+    std::vector<std::shared_ptr<WebSocketSession>> sessions_;
+
 };
 
 int main() {
     try {
         asio::io_context io_context;
         WebSocketServer server(io_context, 8080);
+
+        server.set_message_handler([](std::shared_ptr<WebSocketSession> session, WebSocketOpCode opcode, const std::string& message) {
+            std::cout << "Received message: " << message << std::endl;
+            // Echo the message back to the client
+            session->send(message, opcode);
+        });
+
+        // Function to send "Hello World" every second
+        std::function<void(const asio::error_code&)> send_hello_world;
+        send_hello_world = [&](const asio::error_code& /*e*/) {
+            server.broadcast("Hello World");
+            server.timer_.expires_after(std::chrono::seconds(1));
+            server.timer_.async_wait(send_hello_world);
+        };
+
+        // Start the timer
+        server.timer_.expires_after(std::chrono::seconds(1));
+        server.timer_.async_wait(send_hello_world);
+
         io_context.run();
     } catch (std::exception& e) {
         std::cerr << "Exception: " << e.what() << "\n";
