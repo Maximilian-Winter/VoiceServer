@@ -1,0 +1,7 @@
+services:
+  voice_server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "12345:12345/udp"
