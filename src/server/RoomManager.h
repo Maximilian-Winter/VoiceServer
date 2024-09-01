@@ -1,5 +1,7 @@
 #pragma once
 
+#include <deque>
+
 #include "Client.h"
 #include "AudioPacket.h"
 #include "AudioMixer.h"
@@ -27,14 +29,22 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
 
         // Add the new audio packet to the buffer
-        audioBuffer_[senderId] = packet;
+        audioBuffers_[senderId].push_back(packet);
+
+        // Keep only the last N packets (e.g., 5 packets for 100ms of audio at 20ms per packet)
+        while (audioBuffers_[senderId].size() > 5) {
+            audioBuffers_[senderId].pop_front();
+        }
 
         // Mix audio for each client
         for (const auto& [clientId, client] : clients_) {
             std::vector<AudioPacket> packetsToMix;
-            for (const auto& [bufferId, bufferPacket] : audioBuffer_) {
+            for (const auto& [bufferId, bufferPackets] : audioBuffers_) {
                 if (bufferId != clientId) {  // Don't include client's own audio
-                    packetsToMix.push_back(bufferPacket);
+                    // Add the most recent packet from each client to mix
+                    if (!bufferPackets.empty()) {
+                        packetsToMix.push_back(bufferPackets.back());
+                    }
                 }
             }
 
@@ -47,6 +57,6 @@ public:
 
 private:
     std::unordered_map<std::string, std::shared_ptr<Client>> clients_;
-    std::unordered_map<std::string, AudioPacket> audioBuffer_;
+    std::unordered_map<std::string, std::deque<AudioPacket>> audioBuffers_;
     std::mutex mutex_;
 };
