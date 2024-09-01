@@ -1,7 +1,5 @@
 #pragma once
 
-#include <deque>
-
 #include "Client.h"
 #include "AudioPacket.h"
 #include "AudioMixer.h"
@@ -28,22 +26,22 @@ public:
     void processAudio(udp::socket& socket, const std::string& senderId, const AudioPacket& packet) {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        // Add the new audio packet to the buffer
-        audioBuffers_[senderId].push_back(packet);
+        // Update the timestamp for the sender
+        auto now = std::chrono::steady_clock::now();
+        clientLastActivity_[senderId] = now;
 
-        // Keep only the last N packets (e.g., 5 packets for 100ms of audio at 20ms per packet)
-        while (audioBuffers_[senderId].size() > 5) {
-            audioBuffers_[senderId].pop_front();
-        }
+        // Add the new audio packet to the buffer
+        audioBuffer_[senderId] = packet;
 
         // Mix audio for each client
         for (const auto& [clientId, client] : clients_) {
             std::vector<AudioPacket> packetsToMix;
-            for (const auto& [bufferId, bufferPackets] : audioBuffers_) {
+            for (const auto& [bufferId, bufferPacket] : audioBuffer_) {
                 if (bufferId != clientId) {  // Don't include client's own audio
-                    // Add the most recent packet from each client to mix
-                    if (!bufferPackets.empty()) {
-                        packetsToMix.push_back(bufferPackets.back());
+                    auto lastActivity = clientLastActivity_[bufferId];
+                    // Only include audio from clients who have been active in the last second
+                    if (std::chrono::duration_cast<std::chrono::seconds>(now - lastActivity).count() < 1) {
+                        packetsToMix.push_back(bufferPacket);
                     }
                 }
             }
@@ -53,10 +51,21 @@ public:
                 client->send(socket, mixedPacket);
             }
         }
+
+        // Clean up old entries
+        for (auto it = clientLastActivity_.begin(); it != clientLastActivity_.end();) {
+            if (std::chrono::duration_cast<std::chrono::seconds>(now - it->second).count() > 5) {
+                audioBuffer_.erase(it->first);
+                it = clientLastActivity_.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 
 private:
     std::unordered_map<std::string, std::shared_ptr<Client>> clients_;
-    std::unordered_map<std::string, std::deque<AudioPacket>> audioBuffers_;
+    std::unordered_map<std::string, AudioPacket> audioBuffer_;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> clientLastActivity_;
     std::mutex mutex_;
 };
