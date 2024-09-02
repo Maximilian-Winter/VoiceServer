@@ -41,6 +41,12 @@
     let mediaStream;
     let webSocket;
 
+    // Audio parameters matching the C++ client
+    const SAMPLE_RATE = 44100;
+    const FRAMES_PER_BUFFER = 4096;
+    const CHANNELS = 1;
+    const PACKET_INTERVAL = 20; // milliseconds
+
     const connectBtn = document.getElementById('connectBtn');
     const disconnectBtn = document.getElementById('disconnectBtn');
     const startAudioBtn = document.getElementById('startAudioBtn');
@@ -54,7 +60,7 @@
 
     async function connect() {
         try {
-            webSocket = new WebSocket('ws://localhost:8080'); // Replace with your WebSocket server URL
+            webSocket = new WebSocket('ws://cye-erebor:8080'); // Replace with your WebSocket server URL
             webSocket.binaryType = 'arraybuffer';
 
             webSocket.onopen = () => {
@@ -99,13 +105,47 @@
 
     async function startAudio() {
         try {
-            audioContext = new AudioContext();
+            // First, try to get the exact constraints
+            const constraints = {
+                audio: {
+                    sampleRate: { exact: SAMPLE_RATE },
+                    channelCount: { exact: CHANNELS },
+                    echoCancellation: false,
+                    autoGainControl: false,
+                    noiseSuppression: false
+                }
+            };
+
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+            } catch (err) {
+                console.warn("Couldn't get exact audio constraints, trying with more flexible options");
+                // If exact constraints fail, try with more flexible options
+                constraints.audio.sampleRate = { ideal: SAMPLE_RATE };
+                constraints.audio.channelCount = { ideal: CHANNELS };
+                mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+            }
+
+            // Get the actual settings of the mediaStream
+            const audioTrack = mediaStream.getAudioTracks()[0];
+            const actualSettings = audioTrack.getSettings();
+            console.log("Actual audio settings:", actualSettings);
+
+            // Create AudioContext with the actual sample rate
+            audioContext = new AudioContext({ sampleRate: actualSettings.sampleRate });
             await audioContext.audioWorklet.addModule('voice-processor.js');
 
-            audioWorklet = new AudioWorkletNode(audioContext, 'voice-processor');
+            audioWorklet = new AudioWorkletNode(audioContext, 'voice-processor', {
+                outputChannelCount: [actualSettings.channelCount],
+                processorOptions: {
+                    framesPerBuffer: FRAMES_PER_BUFFER,
+                    channels: actualSettings.channelCount,
+                    packetInterval: PACKET_INTERVAL,
+                    actualSampleRate: actualSettings.sampleRate
+                }
+            });
             audioWorklet.connect(audioContext.destination);
 
-            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const source = audioContext.createMediaStreamSource(mediaStream);
             source.connect(audioWorklet);
 
@@ -113,7 +153,6 @@
             startAudioBtn.disabled = true;
             stopAudioBtn.disabled = false;
 
-            // Send audio data to the server
             audioWorklet.port.onmessage = (event) => {
                 if (webSocket && webSocket.readyState === WebSocket.OPEN) {
                     webSocket.send(event.data);

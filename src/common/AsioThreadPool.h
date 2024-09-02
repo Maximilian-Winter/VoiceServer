@@ -33,11 +33,12 @@ public:
     void run() {
         if (threads_.empty()) {
             threads_.reserve(thread_count_);
-            for (size_t i = 0; i < thread_count_; ++i) {
+            for (size_t i = 0; i < thread_count_ - 1; ++i) {
                 threads_.emplace_back([this]() {
-                    io_context_.run();
+
                 });
             }
+            io_context_.run();
         }
     }
 

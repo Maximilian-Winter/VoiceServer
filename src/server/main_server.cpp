@@ -103,7 +103,7 @@ int main(int argc, char* argv[]) {
 
         server->start();
         thread_pool.run();
-        std::cin.get();
+
     } catch (std::exception& e) {
         std::cerr << "Exception: " << e.what() << std::endl;
     }

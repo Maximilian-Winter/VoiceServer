@@ -28,7 +28,7 @@ COPY voice_server_config.json /app/
 # Copy built executables from builder stage
 COPY --from=builder /app/build/bin/voice_server /app/
 
-EXPOSE 12345
+EXPOSE 12345 8080
 
 RUN chmod +x /app/voice_server
 

@@ -11,23 +11,38 @@ public:
             return AudioPacket();
         }
 
-        // Assume all packets have the same size and format (16-bit PCM)
-        size_t sampleCount = packets[0].size() / sizeof(int16_t);
-        std::vector<int32_t> mixBuffer(sampleCount, 0);
+        // Find the maximum packet size
+        size_t maxSampleCount = 0;
+        for (const auto& packet : packets) {
+            size_t packetSampleCount = packet.size() / sizeof(int16_t);
+            maxSampleCount = std::max(maxSampleCount, packetSampleCount);
+        }
+
+        std::vector<int32_t> mixBuffer(maxSampleCount, 0);
+        std::vector<int> sampleCounts(maxSampleCount, 0);
 
         // Mix all packets
         for (const auto& packet : packets) {
             const int16_t* samples = reinterpret_cast<const int16_t*>(packet.data());
-            for (size_t i = 0; i < sampleCount; ++i) {
+            size_t packetSampleCount = packet.size() / sizeof(int16_t);
+
+            for (size_t i = 0; i < packetSampleCount; ++i) {
                 mixBuffer[i] += static_cast<int32_t>(samples[i]);
+                sampleCounts[i]++;
             }
         }
 
         // Normalize and clip
-        std::vector<int16_t> outputBuffer(sampleCount);
-        for (size_t i = 0; i < sampleCount; ++i) {
-            int32_t sample = mixBuffer[i] / static_cast<int32_t>(packets.size());
-            outputBuffer[i] = static_cast<int16_t>(std::clamp(sample, -16384, 16383));
+        std::vector<int16_t> outputBuffer(maxSampleCount);
+        for (size_t i = 0; i < maxSampleCount; ++i) {
+            if (sampleCounts[i] > 0) {
+                int32_t sample = mixBuffer[i] / static_cast<int32_t>(sampleCounts[i]);
+                const float headroom_factor = 0.5f;  // Adjust as needed
+                int32_t scaled_sample = static_cast<int32_t>(sample * headroom_factor);
+                outputBuffer[i] = static_cast<int16_t>(std::clamp(scaled_sample, INT16_MIN, static_cast<int32_t>(INT16_MAX)));
+            } else {
+                outputBuffer[i] = 0;
+            }
         }
 
         return AudioPacket(reinterpret_cast<const uint8_t*>(outputBuffer.data()), outputBuffer.size() * sizeof(int16_t));
