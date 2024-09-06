@@ -71,4 +71,4 @@ Thumbs.db
 /example_audio_streaming/src/text_test/cmake-build-release
 /example_audio_streaming/src/voice/cmake-build-debug
 /example_audio_streaming/src/voice/cmake-build-release
-/dh2048.pem
+dh2048.pem
