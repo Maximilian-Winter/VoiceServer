@@ -1,10 +1,11 @@
 # Build stage
 FROM debian:bookworm-slim AS builder
 
-# Install dependencies
+# Install dependencies including OpenSSL dev libraries
 RUN apt-get update && apt-get install -y \
     build-essential \
-    cmake
+    cmake \
+    libssl-dev
 
 WORKDIR /app
 
@@ -21,10 +22,15 @@ RUN mkdir build && cd build \
 # Runtime stage
 FROM debian:bookworm-slim
 
+# Install runtime OpenSSL libraries
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY voice_server_config.json /app/
-
+COPY dh2048.pem /app/
 # Copy built executables from builder stage
 COPY --from=builder /app/build/bin/voice_server /app/
 

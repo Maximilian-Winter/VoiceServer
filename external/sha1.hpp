@@ -30,7 +30,8 @@
 #include <sstream>
 #include <string>
 
-
+namespace SHA1Custom
+{
 class SHA1
 {
 public:
@@ -330,5 +331,5 @@ inline std::string SHA1::from_file(const std::string &filename)
     return checksum.final();
 }
 
-
+}
 #endif /* SHA1_HPP */

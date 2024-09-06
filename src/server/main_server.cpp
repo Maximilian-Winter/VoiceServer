@@ -6,6 +6,7 @@
 #include <utility>
 #include <WebSocketServer.h>
 
+#include "AsioThreadPool.h"
 #include "Config.h"
 #include "RoomManager.h"
 
@@ -82,11 +83,11 @@ int main(int argc, char* argv[]) {
     config.load(argv[1]);
 
     try {
-        AsioThreadPool thread_pool;
+        AsioThreadPool thread_pool(1);
 
         auto server = std::make_shared<VoiceChatServer>(thread_pool.get_io_context(), config.get<short>("port", 12345));
 
-        auto web_socket_server = std::make_shared<WebSocketServer>(thread_pool.get_io_context(), 8080);
+        auto web_socket_server = std::make_shared<WebSocketServer>(thread_pool.get_io_context(), 8080, true);
 
         web_socket_server->set_new_client_handler([server](std::shared_ptr<WebSocketSession> session)
         {
