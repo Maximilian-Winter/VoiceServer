@@ -60,7 +60,7 @@
 
     async function connect() {
         try {
-            webSocket = new WebSocket('ws://cye-erebor:8080'); // Replace with your WebSocket server URL
+            webSocket = new WebSocket('ws://localhost:8080'); // Replace with your WebSocket server URL
             webSocket.binaryType = 'arraybuffer';
 
             webSocket.onopen = () => {
