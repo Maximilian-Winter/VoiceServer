@@ -1,10 +1,12 @@
 # chat_server/CMakeLists.txt
 cmake_minimum_required(VERSION 3.5)
-
+set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
 project(voice_chat)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(OpenSSL REQUIRED)
 
 # Define ASIO_STANDALONE to avoid needing Boost
 add_definitions(-DASIO_STANDALONE)
@@ -29,8 +31,14 @@ add_executable(voice_server
 target_include_directories(voice_server PRIVATE
         ${ASIO_INCLUDE_DIR}
         ${PORTAUDIO_DIR}/include
+        ${OPENSSL_INCLUDE_DIR}
         external
         src/common
+)
+
+target_link_libraries(voice_server PRIVATE
+        OpenSSL::SSL
+        OpenSSL::Crypto
 )
 
 set_target_properties(voice_server PROPERTIES
@@ -65,13 +73,14 @@ add_executable(text_websocket_server
 
 target_include_directories(text_websocket_server PRIVATE
         ${ASIO_INCLUDE_DIR}
-        ${PORTAUDIO_DIR}/include
+        ${OPENSSL_INCLUDE_DIR}
         external
         src/common
 )
 
 target_link_libraries(text_websocket_server PRIVATE
-        portaudio_static
+        OpenSSL::SSL
+        OpenSSL::Crypto
 )
 
 set_target_properties(text_websocket_server PROPERTIES

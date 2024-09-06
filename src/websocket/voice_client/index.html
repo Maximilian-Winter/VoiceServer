@@ -105,33 +105,22 @@
 
     async function startAudio() {
         try {
-            // First, try to get the exact constraints
             const constraints = {
                 audio: {
-                    sampleRate: { exact: SAMPLE_RATE },
-                    channelCount: { exact: CHANNELS },
+                    sampleRate: { ideal: SAMPLE_RATE },
+                    channelCount: { ideal: CHANNELS },
                     echoCancellation: false,
                     autoGainControl: false,
                     noiseSuppression: false
                 }
             };
 
-            try {
-                mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-            } catch (err) {
-                console.warn("Couldn't get exact audio constraints, trying with more flexible options");
-                // If exact constraints fail, try with more flexible options
-                constraints.audio.sampleRate = { ideal: SAMPLE_RATE };
-                constraints.audio.channelCount = { ideal: CHANNELS };
-                mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-            }
+            mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
 
-            // Get the actual settings of the mediaStream
             const audioTrack = mediaStream.getAudioTracks()[0];
             const actualSettings = audioTrack.getSettings();
             console.log("Actual audio settings:", actualSettings);
 
-            // Create AudioContext with the actual sample rate
             audioContext = new AudioContext({ sampleRate: actualSettings.sampleRate });
             await audioContext.audioWorklet.addModule('voice-processor.js');
 
@@ -155,7 +144,18 @@
 
             audioWorklet.port.onmessage = (event) => {
                 if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-                    webSocket.send(event.data);
+                    // Convert Float32Array to Int16Array
+                    const int16Data = new Int16Array(event.data.length);
+                    for (let i = 0; i < event.data.length; i++) {
+                        int16Data[i] = Math.max(-32768, Math.min(32767, Math.round(event.data[i] * 32767)));
+                    }
+
+                    // Send data in chunks to avoid large frames
+                    const chunkSize = 4096; // Adjust this value as needed
+                    for (let i = 0; i < int16Data.length; i += chunkSize) {
+                        const chunk = int16Data.slice(i, i + chunkSize);
+                        webSocket.send(chunk.buffer);
+                    }
                 }
             };
         } catch (error) {

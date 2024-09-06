@@ -3,18 +3,15 @@
 //
 #pragma once
 #include <asio.hpp>
-#include <asio/ts/buffer.hpp>
-#include <asio/ts/internet.hpp>
+#include <asio/ssl.hpp>
 #include <deque>
-#include <sha1.hpp>
+#include "sha1.hpp"
 #include <thread>
-
 #include <iostream>
 #include <string>
-
 #include <vector>
+#include "Utilities.h"
 
-#include <Utilities.h>
 using asio::ip::tcp;
 
 enum class WebSocketOpCode : uint8_t {
@@ -26,21 +23,32 @@ enum class WebSocketOpCode : uint8_t {
     Pong = 0xA
 };
 
+
 class WebSocketSession : public std::enable_shared_from_this<WebSocketSession> {
 public:
     using message_handler = std::function<void(WebSocketOpCode, const std::string&)>;
 
-    explicit WebSocketSession(tcp::socket& socket)
-        : socket_(std::move(socket)), uuid(Utilities::generateUuid()) {}
+    WebSocketSession(tcp::socket socket)
+        : socket_(std::move(socket)), ssl_socket_(nullptr), use_ssl_(false), uuid(Utilities::generateUuid()) {}
+
+    WebSocketSession(tcp::socket socket, asio::ssl::context& ssl_context)
+        : socket_(std::move(socket)),
+          ssl_socket_(new asio::ssl::stream<tcp::socket>(std::move(socket_), ssl_context)),
+          use_ssl_(true),
+          uuid(Utilities::generateUuid()) {}
 
     void start() {
-        do_handshake();
+        if (use_ssl_) {
+            do_ssl_handshake();
+        } else {
+            do_handshake();
+        }
     }
 
-    void setMessageHandler(const message_handler &msg_handler)
-    {
+    void setMessageHandler(const message_handler &msg_handler) {
         on_message_ = msg_handler;
     }
+
     void send(const std::vector<uint8_t>& message, WebSocketOpCode opcode = WebSocketOpCode::Binary) {
         auto frame = create_websocket_frame(message, opcode);
         bool write_in_progress = !write_queue_.empty();
@@ -50,42 +58,49 @@ public:
         }
     }
 
-    // Keep the string version for backwards compatibility
     void send(const std::string& message, WebSocketOpCode opcode = WebSocketOpCode::Text) {
         send(std::vector<uint8_t>(message.begin(), message.end()), opcode);
     }
 
-    std::string getUuid() { return uuid; };
+    std::string getUuid() { return uuid; }
 
 private:
+    void do_ssl_handshake() {
+        auto self(shared_from_this());
+        ssl_socket_->async_handshake(asio::ssl::stream_base::server,
+            [this, self](std::error_code ec) {
+                if (!ec) {
+                    do_handshake();
+                } else {
+                    std::cerr << "SSL handshake error: " << ec.message() << "\n";
+                }
+            });
+    }
+
     void do_handshake() {
         auto self(shared_from_this());
-        asio::async_read_until(socket_, buffer_, "\r\n\r\n",
+        async_read_until(socket_, buffer_, "\r\n\r\n",
             [this, self](std::error_code ec, std::size_t length) {
                 if (!ec) {
-                    // Parse WebSocket handshake request
                     std::string request(asio::buffers_begin(buffer_.data()),
                                         asio::buffers_begin(buffer_.data()) + length);
                     buffer_.consume(length);
 
-                    // Extract the Sec-WebSocket-Key
                     std::string key = extract_websocket_key(request);
                     if (key.empty()) {
                         std::cerr << "Invalid WebSocket handshake request\n";
                         return;
                     }
 
-                    // Generate the Sec-WebSocket-Accept value
                     std::string accept = generate_websocket_accept(key);
 
-                    // Generate WebSocket handshake response
                     std::string response = "HTTP/1.1 101 Switching Protocols\r\n"
                                            "Upgrade: websocket\r\n"
                                            "Connection: Upgrade\r\n"
                                            "Sec-WebSocket-Accept: " + accept + "\r\n"
                                            "\r\n";
                     auto msg = std::make_shared<std::string>(response);
-                    asio::async_write(socket_, asio::buffer(*msg),
+                    async_write(asio::buffer(*msg),
                         [this, msg, self](std::error_code ec, std::size_t /*length*/) {
                             if (!ec) {
                                 do_read();
@@ -103,11 +118,11 @@ private:
         auto self(shared_from_this());
         read_buffer_ = std::make_shared<std::vector<uint8_t>>();
         read_buffer_->resize(65536);
-        socket_.async_read_some(asio::buffer(*read_buffer_),
+        async_read_some(asio::buffer(*read_buffer_),
             [this, self](std::error_code ec, std::size_t length) {
                 if (!ec) {
                     handle_frame(*read_buffer_, length);
-                    do_read(); // Continue reading
+                    do_read();
                 } else {
                     std::cerr << "Read error: " << ec.message() << "\n";
                 }
@@ -117,12 +132,12 @@ private:
     void do_write() {
         auto self(shared_from_this());
         if (!write_queue_.empty()) {
-            asio::async_write(socket_, asio::buffer(*write_queue_.front()),
+            async_write(asio::buffer(*write_queue_.front()),
                 [this, self](std::error_code ec, std::size_t /*length*/) {
                     if (!ec) {
                         write_queue_.pop_front();
                         if (!write_queue_.empty()) {
-                            do_write(); // Continue writing if there are more messages
+                            do_write();
                         }
                     } else {
                         std::cerr << "Write error: " << ec.message() << "\n";
@@ -151,7 +166,7 @@ private:
     }
 
 
-    void handle_frame(const std::vector<unsigned char>& buffer, std::size_t length) {
+        void handle_frame(const std::vector<unsigned char>& buffer, std::size_t length) {
         if (length < 2) return;
 
         bool fin = (buffer[0] & 0x80) != 0;
@@ -160,9 +175,10 @@ private:
         uint64_t payload_length = buffer[1] & 0x7F;
         size_t header_length = 2;
 
+        // Handle different payload length scenarios
         if (payload_length == 126) {
             if (length < 4) return;
-            payload_length = (buffer[2] << 8) | buffer[3];
+            payload_length = (static_cast<uint16_t>(buffer[2]) << 8) | buffer[3];
             header_length += 2;
         } else if (payload_length == 127) {
             if (length < 10) return;
@@ -171,6 +187,28 @@ private:
                 payload_length = (payload_length << 8) | buffer[2 + i];
             }
             header_length += 8;
+
+            // Check for protocol violation: payload length exceeds maximum allowed
+            if (payload_length > 0x7FFFFFFFFFFFFFFF) {
+                // Handle error: payload too large
+                std::cerr << "Error: Payload length exceeds maximum allowed by WebSocket protocol." << std::endl;
+                return;
+            }
+        }
+
+        // Sanity check: ensure payload length is reasonable
+        const uint64_t MAX_REASONABLE_PAYLOAD = 1024 * 1024 * 100;  // 100 MB, adjust as needed
+        if (payload_length > MAX_REASONABLE_PAYLOAD) {
+            // Handle error: payload too large
+            std::cerr << "Error: Payload length " << payload_length << " exceeds maximum reasonable size." << std::endl;
+            return;
+        }
+
+        // Ensure we have enough data for the full frame
+        if (length < header_length + payload_length) {
+            // Handle error: incomplete frame
+            std::cerr << "Error: Incomplete WebSocket frame." << std::endl;
+            return;
         }
 
         if (masked) {
@@ -178,15 +216,15 @@ private:
             std::vector<unsigned char> mask(buffer.begin() + header_length, buffer.begin() + header_length + 4);
             header_length += 4;
 
-            std::string payload(buffer.begin() + header_length, buffer.begin() + std::min(static_cast<int>(header_length + payload_length), 65536));
+            std::vector<unsigned char> payload(buffer.begin() + header_length, buffer.begin() + header_length + payload_length);
             for (size_t i = 0; i < payload.size(); ++i) {
                 payload[i] ^= mask[i % 4];
             }
 
-            on_message_(opcode, payload);
+            on_message_(opcode, std::string(payload.begin(), payload.end()));
         } else {
-            std::string payload(buffer.begin() + header_length, buffer.begin() + header_length + payload_length);
-            on_message_(opcode, payload);
+            std::vector<unsigned char> payload(buffer.begin() + header_length, buffer.begin() + header_length + payload_length);
+            on_message_(opcode, std::string(payload.begin(), payload.end()));
         }
     }
 
@@ -205,7 +243,7 @@ private:
         std::string concatenated = key + magic_string;
 
         // Generate SHA1 hash
-        SHA1 sha1;
+        SHA1Custom::SHA1 sha1;
         sha1.update(concatenated);
         std::string hash = sha1.final();
 
@@ -232,9 +270,38 @@ private:
         frame.insert(frame.end(), message.begin(), message.end());
         return frame;
     }
+    template<typename AsyncReadStream, typename ReadHandler>
+      void async_read_until(AsyncReadStream& s, asio::streambuf& b,
+                            const std::string& delim, ReadHandler handler) {
+        if (use_ssl_) {
+            asio::async_read_until(*ssl_socket_, b, delim, handler);
+        } else {
+            asio::async_read_until(socket_, b, delim, handler);
+        }
+    }
+
+    template<typename ConstBufferSequence, typename WriteHandler>
+    void async_write(const ConstBufferSequence& buffers, WriteHandler handler) {
+        if (use_ssl_) {
+            asio::async_write(*ssl_socket_, buffers, handler);
+        } else {
+            asio::async_write(socket_, buffers, handler);
+        }
+    }
+
+    template<typename MutableBufferSequence, typename ReadHandler>
+    void async_read_some(const MutableBufferSequence& buffers, ReadHandler handler) {
+        if (use_ssl_) {
+            ssl_socket_->async_read_some(buffers, handler);
+        } else {
+            socket_.async_read_some(buffers, handler);
+        }
+    }
 
     std::string uuid;
     tcp::socket socket_;
+    std::unique_ptr<asio::ssl::stream<tcp::socket>> ssl_socket_;
+    bool use_ssl_;
     asio::streambuf buffer_;
     std::shared_ptr<std::vector<uint8_t>> read_buffer_;
     std::deque<std::shared_ptr<std::vector<uint8_t>>> write_queue_;
