@@ -27,14 +27,14 @@ public:
         start_receive();
     }
 
-    void add_websocket_user(std::shared_ptr<WebSocketSession> connection)
+    void add_websocket_user(const std::shared_ptr<WebSocketSession>& connection)
     {
         auto client = std::make_shared<WebSocketClient>(connection, socket_, connection->getUuid());
         room_manager_->addClient(client);
         std::cout << "New client connected: " << client->getId() << std::endl;
     }
-    void handle_receive_websocket(std::string client_key, std::vector<uint8_t> bytes) {
-        AudioPacket packet(bytes.data(), bytes.size());
+    void handle_receive_websocket(const std::string& client_key, const std::vector<uint8_t> &bytes) const {
+        const AudioPacket packet(bytes.data(), bytes.size());
         room_manager_->processAudio(client_key, packet);
     }
 
@@ -87,16 +87,16 @@ int main(int argc, char* argv[]) {
 
         auto server = std::make_shared<VoiceChatServer>(thread_pool.get_io_context(), config.get<short>("port", 12345));
 
-        auto web_socket_server = std::make_shared<WebSocketServer>(thread_pool.get_io_context(), 8080, true);
+        const auto web_socket_server = std::make_shared<WebSocketServer>(thread_pool.get_io_context(), 8080, true);
 
-        web_socket_server->set_new_client_handler([server](std::shared_ptr<WebSocketSession> session)
+        web_socket_server->set_new_client_handler([server](const std::shared_ptr<WebSocketSession>& session)
         {
-            server->add_websocket_user(std::move(session));
+            server->add_websocket_user(session);
         });
-        web_socket_server->set_message_handler([server](const std::shared_ptr<WebSocketSession>& session, WebSocketOpCode opcode, const std::string& message) {
+        web_socket_server->set_message_handler([server](const std::shared_ptr<WebSocketSession>& session, const WebSocketOpCode opcode, const std::string& message) {
             if(opcode == WebSocketOpCode::Binary)
             {
-                std::vector<uint8_t> data(message.begin(), message.end());
+                const std::vector<uint8_t> data(message.begin(), message.end());
                 server->handle_receive_websocket(session->getUuid(), data);
             }
 

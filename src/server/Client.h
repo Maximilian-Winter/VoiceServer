@@ -5,6 +5,8 @@
 
 #include <WebSocketSession.h>
 
+#include <utility>
+
 #include "Connection.h"
 #include "AudioPacket.h"
 enum class ClientType: uint8_t
@@ -31,16 +33,16 @@ public:
         return id_;
     }
 
-    UDPClient(std::shared_ptr<Connection> connection, udp::socket& socket, const std::string& id)
-        : connection_(connection), id_(id), socket_(socket)
+    UDPClient(std::shared_ptr<Connection> connection, udp::socket& socket, std::string  id)
+        : connection_(std::move(connection)), id_(std::move(id)), socket_(socket)
     {
     }
 
-    void send(const AudioPacket& packet) {
+    void send(const AudioPacket& packet) override {
         connection_->send(socket_, packet);
     }
 
-    std::string getId() const { return id_; }
+    [[nodiscard]] std::string getId() const { return id_; }
 
 private:
     std::shared_ptr<Connection> connection_;
