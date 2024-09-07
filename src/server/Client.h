@@ -33,12 +33,11 @@ public:
         return id_;
     }
 
-    UDPClient(std::shared_ptr<Connection> connection, udp::socket& socket, std::string  id)
-        : connection_(std::move(connection)), id_(std::move(id)), socket_(socket)
-    {
+    UDPClient(std::shared_ptr<Connection> connection, udp::socket &socket, std::string id)
+        : connection_(std::move(connection)), id_(std::move(id)), socket_(socket) {
     }
 
-    void send(const AudioPacket& packet) override {
+    void send(const AudioPacket &packet) override {
         connection_->send(socket_, packet);
     }
 
