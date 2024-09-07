@@ -97,7 +97,7 @@ int main(int argc, char* argv[]) {
                      const std::string &message) {
                 if (opcode == WebSocketOpCode::Binary) {
                     const std::vector<uint8_t> data(message.begin(), message.end());
-                server->handle_receive_websocket(session->getUuid(), data);
+                    server->handle_receive_websocket(session->getUuid(), data);
             }
 
         });
