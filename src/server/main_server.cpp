@@ -11,14 +11,12 @@
 #include "RoomManager.h"
 
 
-
 using asio::ip::udp;
 
 class VoiceChatServer : public std::enable_shared_from_this<VoiceChatServer> {
 public:
-    VoiceChatServer(asio::io_context& io_context, short port)
-    : io_context_(io_context), socket_(io_context, udp::endpoint(udp::v4(), port))
-    {
+    VoiceChatServer(asio::io_context &io_context, short port)
+        : io_context_(io_context), socket_(io_context, udp::endpoint(udp::v4(), port)) {
         room_manager_ = std::make_shared<RoomManager>(io_context);
     }
 
@@ -70,11 +68,11 @@ private:
     udp::socket socket_;
     udp::endpoint remote_endpoint_;
     std::array<uint8_t, 16384> recv_buffer_{};
-    asio::io_context& io_context_;
+    asio::io_context &io_context_;
     std::shared_ptr<RoomManager> room_manager_;
 };
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
     if (argc != 2) {
         std::cerr << "Usage: " << argv[0] << " <config_file>" << std::endl;
         return 1;
@@ -98,14 +96,12 @@ int main(int argc, char* argv[]) {
                 if (opcode == WebSocketOpCode::Binary) {
                     const std::vector<uint8_t> data(message.begin(), message.end());
                     server->handle_receive_websocket(session->getUuid(), data);
-            }
-
-        });
+                }
+            });
 
         server->start();
         thread_pool.run();
-
-    } catch (std::exception& e) {
+    } catch (std::exception &e) {
         std::cerr << "Exception: " << e.what() << std::endl;
     }
 
