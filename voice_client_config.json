@@ -1,4 +1,4 @@
 {
-  "server_ip": "holistic-games.com",
+  "server_ip": "localhost",
   "server_port": 12345
 }

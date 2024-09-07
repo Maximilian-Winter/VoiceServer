@@ -85,7 +85,7 @@ int main(int argc, char *argv[]) {
 
         auto server = std::make_shared<VoiceChatServer>(thread_pool.get_io_context(), config.get<short>("port", 12345));
 
-        const auto web_socket_server = std::make_shared<WebSocketServer>(thread_pool.get_io_context(), 8080, true);
+        const auto web_socket_server = std::make_shared<WebSocketServer>(thread_pool.get_io_context(), 8080, false);
 
         web_socket_server->set_new_client_handler([server](const std::shared_ptr<WebSocketSession> &session) {
             server->add_websocket_user(session);

@@ -36,16 +36,17 @@
 <div id="status">Disconnected</div>
 
 <script>
-    let audioContext;
-    let audioWorklet;
-    let mediaStream;
-    let webSocket;
-
-    // Audio parameters matching the C++ client
     const SAMPLE_RATE = 44100;
     const FRAMES_PER_BUFFER = 4096;
     const CHANNELS = 1;
     const PACKET_INTERVAL = 20; // milliseconds
+    const JITTER_BUFFER_SIZE = 3;
+
+    let audioContext;
+    let audioWorklet;
+    let mediaStream;
+    let webSocket;
+    let jitterBuffer = [];
 
     const connectBtn = document.getElementById('connectBtn');
     const disconnectBtn = document.getElementById('disconnectBtn');
@@ -60,7 +61,7 @@
 
     async function connect() {
         try {
-            webSocket = new WebSocket('ws://localhost:8080'); // Replace with your WebSocket server URL
+            webSocket = new WebSocket('ws://localhost:8080');
             webSocket.binaryType = 'arraybuffer';
 
             webSocket.onopen = () => {
@@ -84,10 +85,11 @@
             };
 
             webSocket.onmessage = (event) => {
-                // Handle incoming audio data
-                if (audioWorklet && event.data instanceof ArrayBuffer) {
-                    const audioData = new Float32Array(event.data);
-                    audioWorklet.port.postMessage(audioData);
+                if (event.data instanceof ArrayBuffer) {
+                    jitterBuffer.push(new Int16Array(event.data));
+                    if (jitterBuffer.length > JITTER_BUFFER_SIZE) {
+                        jitterBuffer.shift();
+                    }
                 }
             };
         } catch (error) {
@@ -117,26 +119,21 @@
 
             mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
 
-            const audioTrack = mediaStream.getAudioTracks()[0];
-            const actualSettings = audioTrack.getSettings();
-            console.log("Actual audio settings:", actualSettings);
-
-            audioContext = new AudioContext({ sampleRate: actualSettings.sampleRate });
-            await audioContext.audioWorklet.addModule('voice-processor.js');
+            audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+            await audioContext.audioWorklet.addModule('static/voice-processor.js');
 
             audioWorklet = new AudioWorkletNode(audioContext, 'voice-processor', {
-                outputChannelCount: [actualSettings.channelCount],
+                outputChannelCount: [CHANNELS],
                 processorOptions: {
                     framesPerBuffer: FRAMES_PER_BUFFER,
-                    channels: actualSettings.channelCount,
+                    channels: CHANNELS,
                     packetInterval: PACKET_INTERVAL,
-                    actualSampleRate: actualSettings.sampleRate
                 }
             });
-            audioWorklet.connect(audioContext.destination);
 
             const source = audioContext.createMediaStreamSource(mediaStream);
             source.connect(audioWorklet);
+            audioWorklet.connect(audioContext.destination);
 
             statusDiv.textContent = 'Audio started';
             startAudioBtn.disabled = true;
@@ -144,23 +141,20 @@
 
             audioWorklet.port.onmessage = (event) => {
                 if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-                    // Convert Float32Array to Int16Array
-                    const int16Data = new Int16Array(event.data.length);
-                    for (let i = 0; i < event.data.length; i++) {
-                        int16Data[i] = Math.max(-32768, Math.min(32767, Math.round(event.data[i] * 32767)));
-                    }
-
-                    // Send data in chunks to avoid large frames
-                    const chunkSize = 4096; // Adjust this value as needed
-                    for (let i = 0; i < int16Data.length; i += chunkSize) {
-                        const chunk = int16Data.slice(i, i + chunkSize);
-                        webSocket.send(chunk.buffer);
-                    }
+                    webSocket.send(event.data);
                 }
             };
+
+            // Start sending jitter buffer data to the audio worklet
+            setInterval(() => {
+                if (jitterBuffer.length > 0) {
+                    audioWorklet.port.postMessage(jitterBuffer.shift());
+                }
+            }, PACKET_INTERVAL);
+
         } catch (error) {
             console.error('Audio start error:', error);
-            statusDiv.textContent = 'Audio start error';
+            statusDiv.textContent = 'Audio start error: ' + error.message;
         }
     }
 
